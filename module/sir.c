@@ -23,7 +23,7 @@
 #include <linux/mutex.h> //Changed since LDD3
 #include <linux/kallsyms.h>
 
-#define SIR_DEBUG
+//#define SIR_DEBUG
 #include "sir_internal.h"
 
 MODULE_AUTHOR("Christopher Yarp");
