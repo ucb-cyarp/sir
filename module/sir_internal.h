@@ -24,7 +24,7 @@
 
     // ==== Structure for partial reads ====
     struct partial_read_state{
-        unsigned int interrupts;
+        u64 interrupts;
         char ind;
         struct mutex lock;
     } ;

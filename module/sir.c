@@ -21,6 +21,7 @@
 #include <linux/uaccess.h>
 #include <linux/errno.h>
 #include <linux/mutex.h> //Changed since LDD3
+#include <linux/kallsyms.h>
 
 #define SIR_DEBUG
 #include "sir_internal.h"
@@ -55,6 +56,26 @@ struct file_operations sir_fops = {
 	.open =           sir_open,
 	.release =        sir_release,
 };
+
+// ++ Function pointer for interrupt ++
+//The function which returns the number of archetecture
+//specific interrupts is unfortunatly not exported like
+//kstat_cpu_irqs_sum is.  Without it, we do not get the 
+//full picture of what interupts have occured on a 
+//particular CPU.  One solution is to find the 
+//address for this function at runtime and assign
+//it to a function pointer.  That is what the function
+//pointer below is for.
+
+//The function prototype was taken from 
+
+//TODO: This is a hacky solution to the problem as
+//the normal compiler checks are bypassed.  Therefore,
+//need to keep an eye on the function to make sure
+//the function prototype does not change.
+
+u64 (*arch_irq_stat_cpu_local) (unsigned int cpu) = NULL;
+
 
 //==== Char Driver Functons ====
 
@@ -159,10 +180,12 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
         int remaining_to_write;
         //No partial data avail, get new data
         int cpu = get_cpu(); //Also disables premption which is important for the kstat functions
+        //This only gets the non-arch specific interrupts
         partial_state->interrupts = kstat_cpu_irqs_sum(cpu); //Thanks to https://stackoverflow.com/questions/3700536/get-interrupt-counters-like-proc-interrupts-from-code for pointing in the right direction
+        partial_state->interrupts += arch_irq_stat_cpu_local(cpu); //This gets the archetecture specific interrupts
         put_cpu(); //Re-enables premption
 
-        printkd("sir: CPU: %d, Interrupts: %d\n", cpu, partial_state->interrupts);
+        printkd("sir: CPU: %d, Interrupts: %lld\n", cpu, partial_state->interrupts);
 
         final_count = SIR_MIN(sizeof(partial_state->interrupts), count);
 
@@ -209,8 +232,22 @@ static void sir_cleanup(void)
 
 static int sir_init(void)
 {
+    //**** Get a pointer to arch_irq_stat_cpu ****
+    //Thanks for the pointer https://stackoverflow.com/questions/40431194/how-do-i-access-any-kernel-symbol-in-a-kernel-module
+    //This is unfortuantly a suboptomal solution that will need to be kept track of.
+    int status;
+    preempt_disable();
+    arch_irq_stat_cpu_local = (typeof(arch_irq_stat_cpu_local)) kallsyms_lookup_name("arch_irq_stat_cpu");
+    preempt_enable();
+    if(arch_irq_stat_cpu_local == NULL)
+    {
+        printk(KERN_WARNING "sir: Unable to find arch_irq_stat_cpu");
+        sir_cleanup();
+        return -ENOMEM;
+    }
+
     //**** Create Device ****
-    int status = alloc_chrdev_region(&dev, 0, 1, "sir");
+    status = alloc_chrdev_region(&dev, 0, 1, "sir");
     if(status < 0){
         //Error Allocating Device
         sir_cleanup();
