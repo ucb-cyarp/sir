@@ -13,35 +13,30 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sched.h>
+#include <stdint.h>
 
 #define SIR_TEST_ITERS 4
 
 typedef struct 
 {
     int cpu;
+    FILE* file;
 } thread_args_t;
 
 void* read_sir_thread(void* arg){
-    FILE* sir_file = fopen("/dev/sir0", "r");
-    unsigned int buf = 0;
-
-    if(sir_file == NULL){
-        perror("Unable to open /dev/sir0");
-        return NULL;
-    }
+    thread_args_t *args = (thread_args_t*) arg;
+    uint64_t buf = 0;
 
     for(int i = 0; i<SIR_TEST_ITERS; i++)
     {
-        int size = fread(&buf, sizeof(buf), 1, sir_file);
+        int size = fread(&buf, sizeof(buf), 1, args->file);
         if(size != 1){
             printf("Unexpected number of elements!\n");
             break;
         }
 
-        printf("Interrupts: %d\n", buf);
+        printf("Interrupts: %ld\n", buf);
     }
-
-    fclose(sir_file);
 
     return NULL;
 }
@@ -65,8 +60,16 @@ int main(int argc, char* argv[]){
     printf("Running on CPU: %d\n", cpu);
 
     //**** Setup the Thread ****
+    FILE* sir_file = fopen("/dev/sir0", "r");
+
     thread_args_t args;
     args.cpu = cpu;
+    args.file = sir_file;
+
+    if(sir_file == NULL){
+        perror("Unable to open /dev/sir0");
+        return 1;
+    }
 
     cpu_set_t cpu_set;
     pthread_t pthread;
@@ -99,6 +102,8 @@ int main(int argc, char* argv[]){
         printf("Problem joining thread\n");
         exit(1);
     }
+
+    fclose(sir_file);
 
     free(rtn);
 
