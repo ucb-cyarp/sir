@@ -14,6 +14,9 @@
 #include <unistd.h>
 #include <sched.h>
 #include <stdint.h>
+#include <sys/ioctl.h>
+
+#include "../module/sir.h"
 
 #define SIR_TEST_ITERS 4
 
@@ -27,6 +30,7 @@ void* read_sir_thread(void* arg){
     thread_args_t *args = (thread_args_t*) arg;
     uint64_t buf = 0;
 
+    printf("char Driver:\n");
     for(int i = 0; i<SIR_TEST_ITERS; i++)
     {
         int size = fread(&buf, sizeof(buf), 1, args->file);
@@ -36,6 +40,21 @@ void* read_sir_thread(void* arg){
         }
 
         printf("Interrupts: %ld\n", buf);
+    }
+
+    printf("ioctl Driver:\n");
+
+    for(int i = 0; i<SIR_TEST_ITERS; i++)
+    {
+        uint64_t interrupts = 0;
+        int status = ioctl(fileno(args->file), SIR_IOCTL_GET, &interrupts);
+        if(status < 0){
+            printf("ioctl error!\n");
+            perror(NULL);
+            break;
+        }
+
+        printf("Interrupts: %ld\n", interrupts);
     }
 
     return NULL;

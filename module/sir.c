@@ -52,7 +52,7 @@ struct file_operations sir_fops = {
 	.owner =          THIS_MODULE,
 	.llseek =         sir_llseek,
 	.read =           sir_read,
-	// .unlocked_ioctl = sir_ioctl, //This changed from LDD3 (see https://lwn.net/Articles/119652/, thanks https://unix.stackexchange.com/questions/4711/what-is-the-difference-between-ioctl-unlocked-ioctl-and-compat-ioctl)
+	.unlocked_ioctl = sir_ioctl, //This changed from LDD3 (see https://lwn.net/Articles/119652/, thanks https://unix.stackexchange.com/questions/4711/what-is-the-difference-between-ioctl-unlocked-ioctl-and-compat-ioctl)
 	.open =           sir_open,
 	.release =        sir_release,
 };
@@ -134,6 +134,11 @@ loff_t sir_llseek(struct file *filp, loff_t off, int whence){
 // Semantics:
 // * If any partial results from another call are present, they are returned
 // * If there are no partial results, the current interrupt count is fetched and returned
+//
+//
+// NOTE: IOCTL and the char driver use the same internal state and may clobber each other's
+//       state if used together.  IOCLT resets the read index to 0 which causes
+//       the 
 ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
     struct partial_read_state* partial_state = (struct partial_read_state*) filp->private_data;
@@ -209,12 +214,42 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
     return final_count;
 }
 
-// //As an alternative to using the char driver, the current interrupt
-// //can be accessed using a ioctl call.
-// long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-// {
+//As an alternative to using the char driver, the current interrupt
+//can be accessed using a ioctl call.
+//The value is returned to a pointer provided from the userspace in ARG
+//This pointer must be to a 64 bit value.
+//This method was used instead of directly using the return value
+//due to how the kenel inspects the return value for negative numbers.
+//This would require additional calls to IOCTL to determine the MSB
+//as the MSB would need to be stripped from any return value
+long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct partial_read_state* partial_state = (struct partial_read_state*) filp->private_data;
+    long rtn_val = -EINVAL;
+    int cpu;
 
-// }
+    printkd(KERN_INFO "sir: ioctl cmd: %x arg: %lx\n", cmd, arg);
+
+    cpu = get_cpu();
+
+    if(cmd == SIR_IOCTL_GET)
+    {
+        u64* rtn_ptr = (u64*) arg;
+        partial_state->interrupts = kstat_cpu_irqs_sum(cpu);
+        partial_state->interrupts += arch_irq_stat_cpu_local(cpu);
+        copy_to_user(rtn_ptr, &(partial_state->interrupts), sizeof(partial_state->interrupts));
+        printkd(KERN_INFO "sir: ioctl get (CPU %d): %lld\n", cpu, partial_state->interrupts);
+        rtn_val = 0; //Success
+    } else
+    {
+        rtn_val = -ENOTTY;
+        printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
+    }
+
+    put_cpu();
+
+    return rtn_val;
+}
 
 // ==== Init / Cleanup Functions ====
 static void sir_cleanup(void)
@@ -243,7 +278,7 @@ static int sir_init(void)
     {
         printk(KERN_WARNING "sir: Unable to find arch_irq_stat_cpu");
         sir_cleanup();
-        return -ENOMEM;
+        return -EFAULT;
     }
 
     //**** Create Device ****

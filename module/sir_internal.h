@@ -9,6 +9,8 @@
     #include <linux/cdev.h>
     #include <linux/types.h>
     #include <linux/mutex.h>
+    
+    #include "sir.h" //Get the numbers defined for IOCTL calls
 
     //==== Init Functions ====
     static void sir_cleanup(void);
@@ -24,7 +26,7 @@
 
     // ==== Structure for partial reads ====
     struct partial_read_state{
-        u64 interrupts;
+        SIR_INTERRUPT_TYPE interrupts;
         char ind;
         struct mutex lock;
     } ;
