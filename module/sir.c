@@ -230,6 +230,8 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     printkd(KERN_INFO "sir: ioctl cmd: %x arg: %lx\n", cmd, arg);
 
+    mutex_lock(&(partial_state->lock));
+
     cpu = get_cpu();
 
     if(cmd == SIR_IOCTL_GET)
@@ -245,6 +247,8 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         rtn_val = -ENOTTY;
         printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
     }
+
+    mutex_unlock(&(partial_state->lock));
 
     put_cpu();
 
