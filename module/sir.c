@@ -130,6 +130,7 @@ int sir_open(struct inode *inode, struct file *filp)
     partial_state->irq_pin = 0;       //PIN: Posted-interrupt notification event (kvm_posted_intr_ipis)
     partial_state->irq_npi = 0;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
     partial_state->irq_piw = 0;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
+    partial_state->arch_irq_stat_sum = 0;
     partial_state->ind = 0;
     mutex_init(&(partial_state->lock));
 
@@ -252,7 +253,6 @@ inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
     //This function stores the indevidual components of the sum that arch_irq_stat_cpu 
     //computes.
     partial_state->irq_std = kstat_cpu_irqs_sum(cpu); //Get the standard (non x86 specific) interrupts
-    partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
 
     partial_state->irq_nmi = irq_stats(cpu)->__nmi_count;
     #ifdef CONFIG_X86_LOCAL_APIC
@@ -342,6 +342,10 @@ inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
 		partial_state->irq_npi = 0;
 		partial_state->irq_piw = 0;
     #endif
+
+    //TODO: Collect the sum of interrupts using the provided function.  This also sums up some of
+    //      interrupts that were not exported and not tracked above.
+    partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
 }
 
 inline void copy_interrupt_report(struct partial_read_state* partial_state, struct sir_report* report){
@@ -366,6 +370,7 @@ inline void copy_interrupt_report(struct partial_read_state* partial_state, stru
         report->irq_pin = partial_state->irq_pin;       //PIN: Posted-interrupt notification event (kvm_posted_intr_ipis)
         report->irq_npi = partial_state->irq_npi;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
         report->irq_piw = partial_state->irq_piw;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
+        report->arch_irq_stat_sum = partial_state->arch_irq_stat_sum;
 }
 
 //As an alternative to using the char driver, the current interrupt

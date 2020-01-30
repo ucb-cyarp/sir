@@ -8,7 +8,7 @@
 #define SIR_IOCTL_GET _IOR(SIR_IOCTL_MAGIC, 0, long)
 #define SIR_IOCTL_GET_DETAILED _IOR(SIR_IOCTL_MAGIC, 1, long)
 
-#define SIR_INTERRUPT_TYPE u64
+#define SIR_INTERRUPT_TYPE uint64_t
 
 struct sir_report{
         SIR_INTERRUPT_TYPE irq_std;       //Standard interrupts (not x86 specific)
