@@ -22,6 +22,9 @@
 #include <linux/errno.h>
 #include <linux/mutex.h> //Changed since LDD3
 #include <linux/kallsyms.h>
+#include <asm/hardirq.h>
+#include <asm/mce.h>
+#include <asm/desc.h>
 
 //#define SIR_DEBUG
 #include "sir_internal.h"
@@ -29,6 +32,16 @@
 MODULE_AUTHOR("Christopher Yarp");
 MODULE_DESCRIPTION("SIR: Simple Interrupt Reporter");
 MODULE_LICENSE("Dual BSD/GPL");
+
+// ==== Externally Defined Symbols ====
+// This is the structure in which IRQ stats for each CPU are
+// stored.  It is declared in arch/x86/include/asm/hardirq.h
+// and defined in arch/x86/kernel/irq.c
+// The structure irq_cpustat_t is defined in 
+// arch/x86/include/asm/hardirq.h
+DECLARE_PER_CPU_SHARED_ALIGNED(irq_cpustat_t, irq_stat);
+
+#define irq_stats(cpu)    (&per_cpu(irq_stat, cpu))
 
 // ==== Global Vars ====
 // ++ Device Numbers ++
@@ -95,7 +108,28 @@ int sir_open(struct inode *inode, struct file *filp)
         printk(KERN_WARNING "sir: Could not allocate data for partial interrupt reads\n");
         return -1;
     }
-    partial_state->interrupts = 0;
+
+    //Reset Internal Struct
+    partial_state->irq_std = 0;       //Standard interrupts (not x86 specific)
+    partial_state->irq_nmi = 0;       //NMI: Non-maskable interrupts             (__nmi_count)
+    partial_state->irq_loc = 0;       //LOC: Local timer interrupts              (apic_timer_irqs)
+    partial_state->irq_spu = 0;       //SPU: Spurious interrupts                 (irq_spurious_count)
+    partial_state->irq_pmi = 0;       //PMI: Performance monitoring interrupts   (apic_perf_irqs)
+    partial_state->irq_iwi = 0;       //IWI: IRQ work interrupts                 (apic_irq_work_irqs)
+    partial_state->irq_rtr = 0;       //RTR: APIC ICR read retries               (icr_read_retry_count)
+    partial_state->irq_plt = 0;       //PLT: Platform interrupts                 (x86_platform_ipis)
+    partial_state->irq_res = 0;       //RES: Rescheduling interrupts             (irq_resched_count)
+    partial_state->irq_cal = 0;       //CAL: Function call interrupts            (irq_call_count)
+    partial_state->irq_tlb = 0;       //TLB: TLB shootdowns                      (irq_tlb_count)
+    partial_state->irq_trm = 0;       //TRM: Thermal event interrupts            (irq_thermal_count)
+    partial_state->irq_thr = 0;       //THR: Threshold APIC interrupts           (irq_threshold_count)
+    partial_state->irq_dfr = 0;       //DFR: Deferred Error APIC interrupts      (irq_deferred_error_count)
+    partial_state->mce_exception = 0; //MCE: Machine check exceptions            (per_cpu(mce_exception_count, j))
+    partial_state->mce_poll = 0;      //MCP: Machine check polls                 (per_cpu(mce_poll_count, j))
+    partial_state->irq_hyp = 0;       //HYP: Hypervisor callback interrupts      (irq_hv_callback_count)
+    partial_state->irq_pin = 0;       //PIN: Posted-interrupt notification event (kvm_posted_intr_ipis)
+    partial_state->irq_npi = 0;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
+    partial_state->irq_piw = 0;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
     partial_state->ind = 0;
     mutex_init(&(partial_state->lock));
 
@@ -158,18 +192,18 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
 
         printkd("sir: Returning previous partial result\n");
 
-        if(partial_state->ind >= sizeof(partial_state->interrupts)){
+        if(partial_state->ind >= sizeof(partial_state->irq_std)){
             printk(KERN_WARNING "sir: Unexpected index durring read: %d\n", partial_state->ind);
             mutex_unlock(&(partial_state->lock));
             return -EFAULT;
         }
 
         //Partial data avail
-        remaining_partial = sizeof(partial_state->interrupts) - partial_state->ind;
+        remaining_partial = sizeof(partial_state->irq_std) - partial_state->ind;
         final_count = SIR_MIN(remaining_partial, count); 
 
         //Set the final count to what was actually copied
-        remaining_to_write = copy_to_user(buf, &(partial_state->interrupts), final_count);
+        remaining_to_write = copy_to_user(buf, &(partial_state->irq_std), final_count);
         if(remaining_to_write < 0){
             printk(KERN_WARNING "sir: Error when copying result to user: %ld\n", final_count);
             mutex_unlock(&(partial_state->lock));
@@ -186,21 +220,21 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
         //No partial data avail, get new data
         int cpu = get_cpu(); //Also disables premption which is important for the kstat functions
         //This only gets the non-arch specific interrupts
-        partial_state->interrupts = kstat_cpu_irqs_sum(cpu); //Thanks to https://stackoverflow.com/questions/3700536/get-interrupt-counters-like-proc-interrupts-from-code for pointing in the right direction
-        partial_state->interrupts += arch_irq_stat_cpu_local(cpu); //This gets the archetecture specific interrupts
+        partial_state->irq_std = kstat_cpu_irqs_sum(cpu); //Thanks to https://stackoverflow.com/questions/3700536/get-interrupt-counters-like-proc-interrupts-from-code for pointing in the right direction
+        partial_state->irq_std += arch_irq_stat_cpu_local(cpu); //This gets the archetecture specific interrupts
         put_cpu(); //Re-enables premption
 
-        printkd("sir: CPU: %d, Interrupts: %lld\n", cpu, partial_state->interrupts);
+        printkd("sir: CPU: %d, Interrupts: %lld\n", cpu, partial_state->irq_std);
 
-        final_count = SIR_MIN(sizeof(partial_state->interrupts), count);
+        final_count = SIR_MIN(sizeof(partial_state->irq_std), count);
 
-        remaining_to_write = copy_to_user(buf, &(partial_state->interrupts), final_count);
+        remaining_to_write = copy_to_user(buf, &(partial_state->irq_std), final_count);
         if(remaining_to_write < 0){
             printk(KERN_WARNING "sir: Error when copying result to user: %ld\n", final_count);
             return -EFAULT;
         }
 
-        if(final_count == sizeof(partial_state->interrupts)){
+        if(final_count == sizeof(partial_state->irq_std)){
             partial_state->ind = 0;
         }else{
             partial_state->ind = final_count;
@@ -212,6 +246,126 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
     mutex_unlock(&(partial_state->lock));
 
     return final_count;
+}
+
+inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
+    //This function stores the indevidual components of the sum that arch_irq_stat_cpu 
+    //computes.
+    partial_state->irq_std = kstat_cpu_irqs_sum(cpu); //Get the standard (non x86 specific) interrupts
+    partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
+
+    partial_state->irq_nmi = irq_stats(cpu)->__nmi_count;
+    #ifdef CONFIG_X86_LOCAL_APIC
+        partial_state->irq_loc = irq_stats(cpu)->apic_timer_irqs;
+        partial_state->irq_spu = irq_stats(cpu)->irq_spurious_count;
+        partial_state->irq_pmi = irq_stats(cpu)->apic_perf_irqs;
+        partial_state->irq_iwi = irq_stats(cpu)->apic_irq_work_irqs;
+        partial_state->irq_rtr = irq_stats(cpu)->icr_read_retry_count;
+
+        //TODO: x86_platform_ipi_callback is not exported
+        //      Will not track this for now.  This is tracked
+        //      by arch_irq_stat_cpu_local however so can be obtained via that
+        //
+        // if (x86_platform_ipi_callback) {
+        //     partial_state->irq_plt = irq_stats(cpu)->x86_platform_ipis;
+        // }else{
+            partial_state->irq_plt = 0;
+        // }
+    #else
+        partial_state->irq_loc = 0;
+        partial_state->irq_spu = 0;
+        partial_state->irq_pmi = 0;
+        partial_state->irq_iwi = 0;
+        partial_state->irq_rtr = 0;
+        partial_state->irq_plt = 0;
+    #endif
+
+    #ifdef CONFIG_SMP
+		partial_state->irq_res = irq_stats(cpu)->irq_resched_count;
+		partial_state->irq_cal = irq_stats(cpu)->irq_call_count;
+		partial_state->irq_tlb = irq_stats(cpu)->irq_tlb_count;
+    #else
+        partial_state->irq_res = 0;
+		partial_state->irq_cal = 0;
+		partial_state->irq_tlb = 0;
+    #endif
+
+    #ifdef CONFIG_X86_THERMAL_VECTOR
+		partial_state->irq_trm = irq_stats(cpu)->irq_thermal_count;
+    #else
+        partial_state->irq_trm = 0;
+    #endif
+
+    #ifdef CONFIG_X86_MCE_THRESHOLD
+		partial_state->irq_thr = irq_stats(cpu)->irq_threshold_count;
+    #else
+        partial_state->irq_thr = 0;
+    #endif
+
+    #ifdef CONFIG_X86_MCE_AMD
+		partial_state->irq_dfr = irq_stats(cpu)->irq_deferred_error_count;
+    #else
+        partial_state->irq_dfr = 0;
+    #endif
+
+    #ifdef CONFIG_X86_MCE
+        //TODO: The mce_exception_count and mce_poll_count variables are
+        //      not exported and are defined in arch/x86/kernel/cpu/mcheck/mce.c
+        //      Will not track for now bit is tracked in arch_irq_stat_cpu_local
+        //
+        // partial_state->mce_exception = per_cpu(mce_exception_count, cpu);
+		// partial_state->mce_poll = per_cpu(mce_poll_count, cpu);
+        partial_state->mce_exception = 0;
+		partial_state->mce_poll = 0;
+    #else
+        partial_state->mce_exception = 0;
+		partial_state->mce_poll = 0;
+    #endif
+
+    #if IS_ENABLED(CONFIG_HYPERV) || defined(CONFIG_XEN)
+        //TODO: system_vectors is not exported and will not be tracked for now
+        // if (test_bit(HYPERVISOR_CALLBACK_VECTOR, system_vectors)) {
+        //     partial_state->irq_hyp = irq_stats(cpu)->irq_hv_callback_count;
+        // }else{
+            partial_state->irq_hyp = 0;
+        // }
+    #else
+        partial_state->irq_hyp = 0;
+    #endif
+
+    #ifdef CONFIG_HAVE_KVM
+		partial_state->irq_pin = irq_stats(cpu)->kvm_posted_intr_ipis;
+		partial_state->irq_npi = irq_stats(cpu)->kvm_posted_intr_nested_ipis;
+		partial_state->irq_piw = irq_stats(cpu)->kvm_posted_intr_wakeup_ipis;
+    #else
+        partial_state->irq_pin = 0;
+		partial_state->irq_npi = 0;
+		partial_state->irq_piw = 0;
+    #endif
+}
+
+inline void copy_interrupt_report(struct partial_read_state* partial_state, struct sir_report* report){
+        report->irq_std = partial_state->irq_std;       //Standard interrupts (not x86 specific)
+        //x86 Specific Interrupts
+        report->irq_nmi = partial_state->irq_nmi;       //NMI: Non-maskable interrupts             (__nmi_count)
+        report->irq_loc = partial_state->irq_loc;       //LOC: Local timer interrupts              (apic_timer_irqs)
+        report->irq_spu = partial_state->irq_spu;       //SPU: Spurious interrupts                 (irq_spurious_count)
+        report->irq_pmi = partial_state->irq_pmi;       //PMI: Performance monitoring interrupts   (apic_perf_irqs)
+        report->irq_iwi = partial_state->irq_iwi;       //IWI: IRQ work interrupts                 (apic_irq_work_irqs)
+        report->irq_rtr = partial_state->irq_rtr;       //RTR: APIC ICR read retries               (icr_read_retry_count)
+        report->irq_plt = partial_state->irq_plt;       //PLT: Platform interrupts                 (x86_platform_ipis)
+        report->irq_res = partial_state->irq_res;       //RES: Rescheduling interrupts             (irq_resched_count)
+        report->irq_cal = partial_state->irq_cal;       //CAL: Function call interrupts            (irq_call_count)
+        report->irq_tlb = partial_state->irq_tlb;       //TLB: TLB shootdowns                      (irq_tlb_count)
+        report->irq_trm = partial_state->irq_trm;       //TRM: Thermal event interrupts            (irq_thermal_count)
+        report->irq_thr = partial_state->irq_thr;       //THR: Threshold APIC interrupts           (irq_threshold_count)
+        report->irq_dfr = partial_state->irq_dfr;       //DFR: Deferred Error APIC interrupts      (irq_deferred_error_count)
+        report->mce_exception = partial_state->mce_exception; //MCE: Machine check exceptions            (per_cpu(mce_exception_count, j))
+        report->mce_poll = partial_state->mce_poll;     //MCP: Machine check polls                 (per_cpu(mce_poll_count, j))
+        report->irq_hyp = partial_state->irq_hyp;       //HYP: Hypervisor callback interrupts      (irq_hv_callback_count)
+        report->irq_pin = partial_state->irq_pin;       //PIN: Posted-interrupt notification event (kvm_posted_intr_ipis)
+        report->irq_npi = partial_state->irq_npi;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
+        report->irq_piw = partial_state->irq_piw;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
 }
 
 //As an alternative to using the char driver, the current interrupt
@@ -235,13 +389,23 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     if(cmd == SIR_IOCTL_GET)
     {
         u64* rtn_ptr = (u64*) arg;
-        partial_state->interrupts = kstat_cpu_irqs_sum(cpu);
-        partial_state->interrupts += arch_irq_stat_cpu_local(cpu);
-        copy_to_user(rtn_ptr, &(partial_state->interrupts), sizeof(partial_state->interrupts));
-        printkd(KERN_INFO "sir: ioctl get (CPU %d): %lld\n", cpu, partial_state->interrupts);
+        SIR_INTERRUPT_TYPE irq_sum;
+        partial_state->irq_std = kstat_cpu_irqs_sum(cpu);
+        partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
+        irq_sum = partial_state->irq_std + partial_state->arch_irq_stat_sum;
+        copy_to_user(rtn_ptr, &(irq_sum), sizeof(irq_sum));
+        printkd(KERN_INFO "sir: ioctl get (CPU %d): %lld\n", cpu, irq_sum);
         rtn_val = 0; //Success
-    } else
-    {
+    } else if(cmd == SIR_IOCTL_GET_DETAILED){
+        struct sir_report* rtn_ptr = (struct sir_report*) arg;
+        struct sir_report report;
+        get_interrupts(cpu, partial_state);
+
+        copy_interrupt_report(partial_state, &report);
+        copy_to_user(rtn_ptr, &report, sizeof(report));
+        printkd(KERN_INFO "sir: ioctl get detail (CPU %d)\n", cpu);
+        rtn_val = 0; //Success
+    }else {
         rtn_val = -ENOTTY;
         printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
     }
@@ -271,6 +435,13 @@ static int sir_init(void)
     //Thanks for the pointer https://stackoverflow.com/questions/40431194/how-do-i-access-any-kernel-symbol-in-a-kernel-module
     //This is unfortuantly a suboptomal solution that will need to be kept track of.
     int status;
+
+    #if !(CONFIG_X86)
+        printk(KERN_WARNING "sir: This module only supports x86");
+        sir_cleanup();
+        return -EFAULT;
+    #endif
+
     preempt_disable();
     arch_irq_stat_cpu_local = (typeof(arch_irq_stat_cpu_local)) kallsyms_lookup_name("arch_irq_stat_cpu");
     preempt_enable();
