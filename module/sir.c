@@ -22,6 +22,7 @@
 #include <linux/errno.h>
 #include <linux/mutex.h> //Changed since LDD3
 #include <linux/kallsyms.h>
+#include <linux/irqflags.h>
 #include <asm/hardirq.h>
 #include <asm/mce.h>
 #include <asm/desc.h>
@@ -219,11 +220,22 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
         }
     }else{
         int remaining_to_write;
+        unsigned long irq_flags;
+
         //No partial data avail, get new data
         int cpu = get_cpu(); //Also disables premption which is important for the kstat functions
+
+        //Disable Interrupts to get accurate interrupt and softirq counts
+        //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
+        local_irq_save(irq_flags);
+
         //This only gets the non-arch specific interrupts
         partial_state->irq_std = kstat_cpu_irqs_sum(cpu); //Thanks to https://stackoverflow.com/questions/3700536/get-interrupt-counters-like-proc-interrupts-from-code for pointing in the right direction
         partial_state->irq_std += arch_irq_stat_cpu_local(cpu); //This gets the archetecture specific interrupts
+        
+        //Re-enable interrupts before copying results to user
+        local_irq_restore(irq_flags);
+        
         put_cpu(); //Re-enables premption
 
         printkd("sir: CPU: %d, Interrupts: %lld\n", cpu, partial_state->irq_std);
@@ -399,6 +411,7 @@ inline void copy_interrupt_report(struct partial_read_state* partial_state, stru
 long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     struct partial_read_state* partial_state = (struct partial_read_state*) filp->private_data;
+    unsigned long irq_flags = 0;
     long rtn_val = -EINVAL;
     int cpu;
 
@@ -408,12 +421,20 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     cpu = get_cpu();
 
+    //Disable Interrupts to get accurate interrupt and softirq counts
+    //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
+    local_irq_save(irq_flags);
+
     if(cmd == SIR_IOCTL_GET)
     {
         u64* rtn_ptr = (u64*) arg;
         SIR_INTERRUPT_TYPE irq_sum;
         partial_state->irq_std = kstat_cpu_irqs_sum(cpu);
         partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
+        
+        //Re-enable interrupts before copying results to user
+        local_irq_restore(irq_flags);
+
         irq_sum = partial_state->irq_std + partial_state->arch_irq_stat_sum;
         copy_to_user(rtn_ptr, &(irq_sum), sizeof(irq_sum));
         printkd(KERN_INFO "sir: ioctl get (CPU %d): %lld\n", cpu, irq_sum);
@@ -423,11 +444,17 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         struct sir_report report;
         get_interrupts(cpu, partial_state);
 
+        //Re-enable interrupts before copying results to user
+        local_irq_restore(irq_flags);
+
         copy_interrupt_report(partial_state, &report);
         copy_to_user(rtn_ptr, &report, sizeof(report));
         printkd(KERN_INFO "sir: ioctl get detail (CPU %d)\n", cpu);
         rtn_val = 0; //Success
     }else {
+        //Re-enable interrupts before copying results to user
+        local_irq_restore(irq_flags);
+
         rtn_val = -ENOTTY;
         printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
     }
