@@ -131,6 +131,7 @@ int sir_open(struct inode *inode, struct file *filp)
     partial_state->irq_npi = 0;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
     partial_state->irq_piw = 0;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
     partial_state->arch_irq_stat_sum = 0;
+    partial_state->softirq_sum = 0;
     partial_state->ind = 0;
     mutex_init(&(partial_state->lock));
 
@@ -249,6 +250,17 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
     return final_count;
 }
 
+//This gets the sum of softirqs for the cpu.  It is similar to show_softirqs in fs/proc/softirqs.c
+inline void get_softirqs(int cpu, SIR_INTERRUPT_TYPE* softirq_sum){
+    int i;
+    SIR_INTERRUPT_TYPE sum = 0;
+    for(i = 0; i<NR_SOFTIRQS; i++){
+        sum += kstat_softirqs_cpu(i, cpu); //Get softirq i count.  Can get the name using softirq_to_name[i]
+    }
+
+    *softirq_sum = sum;
+}
+
 inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
     //This function stores the indevidual components of the sum that arch_irq_stat_cpu 
     //computes.
@@ -346,6 +358,8 @@ inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
     //TODO: Collect the sum of interrupts using the provided function.  This also sums up some of
     //      interrupts that were not exported and not tracked above.
     partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
+
+    get_softirqs(cpu, &(partial_state->softirq_sum));
 }
 
 inline void copy_interrupt_report(struct partial_read_state* partial_state, struct sir_report* report){
@@ -371,6 +385,7 @@ inline void copy_interrupt_report(struct partial_read_state* partial_state, stru
         report->irq_npi = partial_state->irq_npi;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
         report->irq_piw = partial_state->irq_piw;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
         report->arch_irq_stat_sum = partial_state->arch_irq_stat_sum;
+        report->softirq_sum = partial_state->softirq_sum;
 }
 
 //As an alternative to using the char driver, the current interrupt

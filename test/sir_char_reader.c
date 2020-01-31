@@ -112,6 +112,7 @@ void* read_sir_thread(void* arg){
         irq_sum += report.irq_piw;
 
         printf("\tUnaccounted Interrupts: %ld\n", report.arch_irq_stat_sum-irq_sum);
+        printf("\tsoftirq: %ld\n", report.softirq_sum);
     }
 
     return NULL;
