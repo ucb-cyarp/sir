@@ -23,6 +23,7 @@
 #include <linux/mutex.h> //Changed since LDD3
 #include <linux/kallsyms.h>
 #include <linux/irqflags.h>
+#include <linux/interrupt.h>
 #include <asm/hardirq.h>
 #include <asm/mce.h>
 #include <asm/desc.h>
@@ -90,6 +91,59 @@ struct file_operations sir_fops = {
 
 u64 (*arch_irq_stat_cpu_local) (unsigned int cpu) = NULL;
 
+// ++ Softirq Indexes ++
+int num_other_softirqs = 0; //Indicates how many entries are in the softirq_other_indexs array
+int softirq_other_idxs[NR_SOFTIRQS]; //An array of other softirq indexes which were not one of the ones above
+
+//==== Softirq Index Finder ====
+//Verify/Find the indexes of the different softirqs
+//Returns 0 if successful and 1 if one of the softirqs is not found
+int find_softirq_indexes(void)
+{
+    //Tried to use softirq_to_name[] to compare the IRQ name but it appears
+    //that that is not exported, so I can't use it.  However, linux/interrupts.h
+    //defines an enum with these softirq types and indexes which match
+    //those in the softirq_to_name array.  I will assume that they will
+    //match, especially since a comment notes the need to keep old entries
+    //to make sure the index numbering is correct
+
+    int i;
+    int rtn = 0;
+    for(i = 0; i<NR_SOFTIRQS; i++){
+        switch(i)
+        {
+            case HI_SOFTIRQ:
+                break;
+            case TIMER_SOFTIRQ:
+                break;
+            case NET_TX_SOFTIRQ:
+                break;
+            case NET_RX_SOFTIRQ:
+                break;
+            case BLOCK_SOFTIRQ:
+                break;
+            case IRQ_POLL_SOFTIRQ:
+                break;
+            case TASKLET_SOFTIRQ:
+                break;
+            case SCHED_SOFTIRQ:
+                break;
+            case HRTIMER_SOFTIRQ: //This is unused accoring to interrupt.h but is kept for numbering reasons
+                break;
+            case RCU_SOFTIRQ:
+                break;
+            default: //Not one of the known softirqs at the time this was written
+                softirq_other_idxs[num_other_softirqs] = i;
+                num_other_softirqs++;
+                break;
+        }
+    }
+
+    //Check that all of the indexes were found
+    //This is now a compile time error if the enums are not defined
+
+    return rtn;
+}
 
 //==== Char Driver Functons ====
 
@@ -132,7 +186,19 @@ int sir_open(struct inode *inode, struct file *filp)
     partial_state->irq_npi = 0;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
     partial_state->irq_piw = 0;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
     partial_state->arch_irq_stat_sum = 0;
-    partial_state->softirq_sum = 0;
+
+    partial_state->softirq_hi = 0;
+    partial_state->softirq_timer = 0;
+    partial_state->softirq_net_tx = 0;
+    partial_state->softirq_net_rx = 0;
+    partial_state->softirq_block = 0;
+    partial_state->softirq_irq_poll = 0;
+    partial_state->softirq_tasklet = 0;
+    partial_state->softirq_sched = 0;
+    partial_state->softirq_hrtimer = 0;
+    partial_state->softirq_rcu = 0;
+    partial_state->softirq_other = 0; //Other softirqs that are not one of the above
+
     partial_state->ind = 0;
     mutex_init(&(partial_state->lock));
 
@@ -263,14 +329,29 @@ ssize_t sir_read(struct file *filp, char __user *buf, size_t count, loff_t *f_po
 }
 
 //This gets the sum of softirqs for the cpu.  It is similar to show_softirqs in fs/proc/softirqs.c
-inline void get_softirqs(int cpu, SIR_INTERRUPT_TYPE* softirq_sum){
+inline void get_softirqs(int cpu, struct partial_read_state* state){
     int i;
-    SIR_INTERRUPT_TYPE sum = 0;
-    for(i = 0; i<NR_SOFTIRQS; i++){
-        sum += kstat_softirqs_cpu(i, cpu); //Get softirq i count.  Can get the name using softirq_to_name[i]
+    SIR_INTERRUPT_TYPE other_sum = 0;
+
+    //Get the softirqs we are aware of in the kernel at the time this was written
+    //v4.15
+    state->softirq_hi = kstat_softirqs_cpu(HI_SOFTIRQ, cpu);
+    state->softirq_timer = kstat_softirqs_cpu(TIMER_SOFTIRQ, cpu);
+    state->softirq_net_tx = kstat_softirqs_cpu(NET_TX_SOFTIRQ, cpu);
+    state->softirq_net_rx = kstat_softirqs_cpu(NET_RX_SOFTIRQ, cpu);
+    state->softirq_block = kstat_softirqs_cpu(BLOCK_SOFTIRQ, cpu);
+    state->softirq_irq_poll = kstat_softirqs_cpu(IRQ_POLL_SOFTIRQ, cpu);
+    state->softirq_tasklet = kstat_softirqs_cpu(TASKLET_SOFTIRQ, cpu);
+    state->softirq_sched = kstat_softirqs_cpu(SCHED_SOFTIRQ, cpu);
+    state->softirq_hrtimer = kstat_softirqs_cpu(HRTIMER_SOFTIRQ, cpu);
+    state->softirq_rcu = kstat_softirqs_cpu(RCU_SOFTIRQ, cpu);
+    
+    //Get the other softirqs
+    for(i = 0; i<num_other_softirqs; i++){
+        other_sum += kstat_softirqs_cpu(softirq_other_idxs[i], cpu);
     }
 
-    *softirq_sum = sum;
+    state->softirq_other = other_sum;
 }
 
 inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
@@ -371,7 +452,7 @@ inline void get_interrupts(int cpu, struct partial_read_state* partial_state){
     //      interrupts that were not exported and not tracked above.
     partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
 
-    get_softirqs(cpu, &(partial_state->softirq_sum));
+    get_softirqs(cpu, partial_state);
 }
 
 inline void copy_interrupt_report(struct partial_read_state* partial_state, struct sir_report* report){
@@ -397,7 +478,18 @@ inline void copy_interrupt_report(struct partial_read_state* partial_state, stru
         report->irq_npi = partial_state->irq_npi;       //NPI: Nested posted-interrupt event       (kvm_posted_intr_nested_ipis)
         report->irq_piw = partial_state->irq_piw;       //PIW: Posted-interrupt wakeup event       (kvm_posted_intr_wakeup_ipis)
         report->arch_irq_stat_sum = partial_state->arch_irq_stat_sum;
-        report->softirq_sum = partial_state->softirq_sum;
+
+        report->softirq_hi = partial_state->softirq_hi;
+        report->softirq_timer = partial_state->softirq_timer;
+        report->softirq_net_tx = partial_state->softirq_net_tx;
+        report->softirq_net_rx = partial_state->softirq_net_rx;
+        report->softirq_block = partial_state->softirq_block;
+        report->softirq_irq_poll = partial_state->softirq_irq_poll;
+        report->softirq_tasklet = partial_state->softirq_tasklet;
+        report->softirq_sched = partial_state->softirq_sched;
+        report->softirq_hrtimer = partial_state->softirq_hrtimer;
+        report->softirq_rcu = partial_state->softirq_rcu;
+        report->softirq_other = partial_state->softirq_other; //Other softirqs that are not one of the above
 }
 
 //As an alternative to using the char driver, the current interrupt
@@ -492,6 +584,13 @@ static int sir_init(void)
         sir_cleanup();
         return -EFAULT;
     #endif
+
+    //Get the softirq entries
+    status = find_softirq_indexes();
+    if(status != 0){
+        sir_cleanup();
+        return -EFAULT;
+    }
 
     preempt_disable();
     arch_irq_stat_cpu_local = (typeof(arch_irq_stat_cpu_local)) kallsyms_lookup_name("arch_irq_stat_cpu");

@@ -112,7 +112,18 @@ void* read_sir_thread(void* arg){
         irq_sum += report.irq_piw;
 
         printf("\tUnaccounted Interrupts: %ld\n", report.arch_irq_stat_sum-irq_sum);
-        printf("\tsoftirq: %ld\n", report.softirq_sum);
+        
+        printf("\tsoftirq_hi: %ld\n", report.softirq_hi);
+        printf("\tsoftirq_timer: %ld\n", report.softirq_timer);
+        printf("\tsoftirq_net_tx: %ld\n", report.softirq_net_tx);
+        printf("\tsoftirq_net_rx: %ld\n", report.softirq_net_rx);
+        printf("\tsoftirq_block: %ld\n", report.softirq_block);
+        printf("\tsoftirq_irq_poll: %ld\n", report.softirq_irq_poll);
+        printf("\tsoftirq_tasklet: %ld\n", report.softirq_tasklet);
+        printf("\tsoftirq_sched: %ld\n", report.softirq_sched);
+        printf("\tsoftirq_hrtimer: %ld\n", report.softirq_hrtimer);
+        printf("\tsoftirq_rcu: %ld\n", report.softirq_rcu);
+        printf("\tsoftirq_other: %ld\n", report.softirq_other);
     }
 
     return NULL;

@@ -57,7 +57,17 @@
         SIR_INTERRUPT_TYPE arch_irq_stat_sum; //This is the sum of the above interrupts but is gathered using arch_irq_stat_cpu(unsigned int cpu)
                                               //This is collected because some variables are not exported but are read by this function
 
-        SIR_INTERRUPT_TYPE softirq_sum; //The sum of softirqs for this CPU.  See fs/proc/softirqs.c for functions to get the names of softirqs
+        SIR_INTERRUPT_TYPE softirq_hi;
+        SIR_INTERRUPT_TYPE softirq_timer;
+        SIR_INTERRUPT_TYPE softirq_net_tx;
+        SIR_INTERRUPT_TYPE softirq_net_rx;
+        SIR_INTERRUPT_TYPE softirq_block;
+        SIR_INTERRUPT_TYPE softirq_irq_poll;
+        SIR_INTERRUPT_TYPE softirq_tasklet;
+        SIR_INTERRUPT_TYPE softirq_sched;
+        SIR_INTERRUPT_TYPE softirq_hrtimer;
+        SIR_INTERRUPT_TYPE softirq_rcu;
+        SIR_INTERRUPT_TYPE softirq_other; //Other softirqs that are not one of the above
 
         char ind;
         struct mutex lock;
