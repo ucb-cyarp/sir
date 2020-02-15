@@ -70,6 +70,7 @@
         SIR_INTERRUPT_TYPE softirq_other; //Other softirqs that are not one of the above
 
         char ind;
+        unsigned long irq_flags[CONFIG_NR_CPUS];
         struct mutex lock;
     } ;
 

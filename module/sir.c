@@ -159,6 +159,7 @@ int sir_open(struct inode *inode, struct file *filp)
 
     //**** Allocate Data for Partial Reads ****
     struct partial_read_state* partial_state = (struct partial_read_state*) kmalloc(sizeof(struct partial_read_state), GFP_KERNEL);
+    int i;
     if(partial_state == NULL){
         printk(KERN_WARNING "sir: Could not allocate data for partial interrupt reads\n");
         return -1;
@@ -200,6 +201,11 @@ int sir_open(struct inode *inode, struct file *filp)
     partial_state->softirq_other = 0; //Other softirqs that are not one of the above
 
     partial_state->ind = 0;
+
+    for(i = 0; i<CONFIG_NR_CPUS; i++){
+        partial_state->irq_flags[i] = 0;
+    }
+
     mutex_init(&(partial_state->lock));
 
     filp->private_data = partial_state;
@@ -513,14 +519,15 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     cpu = get_cpu();
 
-    //Disable Interrupts to get accurate interrupt and softirq counts
-    //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
-    local_irq_save(irq_flags);
-
     if(cmd == SIR_IOCTL_GET)
     {
         u64* rtn_ptr = (u64*) arg;
         SIR_INTERRUPT_TYPE irq_sum;
+
+        //Disable Interrupts to get accurate interrupt and softirq counts
+        //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
+        local_irq_save(irq_flags);
+
         partial_state->irq_std = kstat_cpu_irqs_sum(cpu);
         partial_state->arch_irq_stat_sum = arch_irq_stat_cpu_local(cpu);
         
@@ -534,6 +541,11 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     } else if(cmd == SIR_IOCTL_GET_DETAILED){
         struct sir_report* rtn_ptr = (struct sir_report*) arg;
         struct sir_report report;
+
+        //Disable Interrupts to get accurate interrupt and softirq counts
+        //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
+        local_irq_save(irq_flags);
+
         get_interrupts(cpu, partial_state);
 
         //Re-enable interrupts before copying results to user
@@ -543,10 +555,16 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         copy_to_user(rtn_ptr, &report, sizeof(report));
         printkd(KERN_INFO "sir: ioctl get detail (CPU %d)\n", cpu);
         rtn_val = 0; //Success
-    }else {
+    } else if(cmd == SIR_IOCTL_DISABLE_INTERRUPT){
+        //Disable Interrupts to get accurate interrupt and softirq counts
+        //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
+        local_irq_save(irq_flags);
+        partial_state->irq_flags[cpu] = irq_flags;
+    } else if(cmd == SIR_IOCTL_RESTORE_INTERRUPT){
         //Re-enable interrupts before copying results to user
+        irq_flags = partial_state->irq_flags[cpu];
         local_irq_restore(irq_flags);
-
+    } else {
         rtn_val = -ENOTTY;
         printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
     }
