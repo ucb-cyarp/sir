@@ -560,10 +560,12 @@ long sir_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         //This is based on the "Disabling all interrupts" section of Ch. 10 of LDD3
         local_irq_save(irq_flags);
         partial_state->irq_flags[cpu] = irq_flags;
+        rtn_val = 0; //Success
     } else if(cmd == SIR_IOCTL_RESTORE_INTERRUPT){
         //Re-enable interrupts before copying results to user
         irq_flags = partial_state->irq_flags[cpu];
         local_irq_restore(irq_flags);
+        rtn_val = 0; //Success
     } else {
         rtn_val = -ENOTTY;
         printkd(KERN_INFO "sir: ioctl default: %ld\n", rtn_val);
