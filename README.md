@@ -1,4 +1,6 @@
 # sir
+Zenodo Concept DOI: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6526351.svg)](https://doi.org/10.5281/zenodo.6526351)
+
 Simple Interrupt Reporter
 
 ## Citing This Software:
